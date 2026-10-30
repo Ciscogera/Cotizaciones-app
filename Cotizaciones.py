@@ -4,7 +4,6 @@ import io
 
 st.set_page_config(page_title="Generador de Cotizaciones - El Bajo", layout="wide")
 
-# --- COLORES BASE ---
 COLOR_TEXT_BLACK = (18 / 255, 18 / 255, 16 / 255)
 COLOR_TEXT_GRAY = (115 / 255, 110 / 255, 100 / 255)
 COLOR_HEADER_META = (184 / 255, 179 / 255, 168 / 255)
@@ -40,31 +39,6 @@ def envolver_texto(texto: str, font_obj, font_size: float, ancho_max: float) -> 
     return lineas_resultado
 
 
-def simular_altura_pildoras(ancho_max, items, font_obj, font_size):
-    """Calcula cuántas filas y alto ocuparán las cápsulas sin dibujarlas."""
-    if not items:
-        return 0
-    x_actual = 0
-    filas = 1
-    pad_x = 10
-    pad_y = 4.5
-    alto_pildora = font_size + (pad_y * 2)
-    espacio_x = 6
-    espacio_y = 6
-
-    for item in items:
-        texto = item.strip()
-        if not texto:
-            continue
-        ancho_pildora = font_obj.text_length(texto, fontsize=font_size) + (pad_x * 2)
-        if x_actual + ancho_pildora > ancho_max and x_actual > 0:
-            x_actual = 0
-            filas += 1
-        x_actual += ancho_pildora + espacio_x
-
-    return filas * (alto_pildora + espacio_y)
-
-
 def dibujar_pildoras(page, x_inicio, y_inicio, ancho_max, items, font_obj, font_name, font_size, bg_cream):
     x_actual = x_inicio
     y_actual = y_inicio
@@ -79,7 +53,6 @@ def dibujar_pildoras(page, x_inicio, y_inicio, ancho_max, items, font_obj, font_
         if not texto:
             continue
         ancho_pildora = font_obj.text_length(texto, fontsize=font_size) + (pad_x * 2)
-
         if x_actual + ancho_pildora > x_inicio + ancho_max and x_actual > x_inicio:
             x_actual = x_inicio
             y_actual += alto_pildora + espacio_y
@@ -235,220 +208,323 @@ with col_form:
     total_evento = subtotal_items + (monto_propina if incluir_propina else 0)
     st.markdown(f"**TOTAL EVENTO:** `{formato_clp(total_evento)}`")
 
+    st.markdown("---")
+    st.subheader("Observaciones / Comentarios (Opcional)")
+    observaciones = st.text_area(
+        "Texto de observaciones para el cliente",
+        value="",
+        placeholder="Ej: El horario de término es a las 02:00 hrs. Monto no reembolsable en caso de cancelación con menos de 48 hrs.",
+        height=85
+    )
+
 
 # --- PROCESAMIENTO DEL PDF ---
 if pdf_base is not None:
     raw_pdf_bytes = pdf_base.getvalue()
     doc = fitz.open(stream=raw_pdf_bytes, filetype="pdf")
-    page = doc[0]
-    W, H = page.rect.width, page.rect.height
+    page1 = doc[0]
+    W, H = page1.rect.width, page1.rect.height
 
-    COLOR_BG_BLACK = muestrear_color_pdf(page, W * 0.50, 15)
-    COLOR_BG_CREAM = muestrear_color_pdf(page, W * 0.50, H * 0.90)
+    COLOR_BG_BLACK = muestrear_color_pdf(page1, W * 0.50, 15)
+    COLOR_BG_CREAM = muestrear_color_pdf(page1, W * 0.50, H * 0.90)
 
-    # Configurar fuentes
+    # Configuración de fuentes
     fname_reg = "F_Reg" if font_regular_file else "helv"
-    if font_regular_file:
-        page.insert_font(fontname=fname_reg, fontbuffer=font_regular_file.getvalue())
-    font_obj_reg = fitz.Font(fontbuffer=font_regular_file.getvalue()) if font_regular_file else fitz.Font("helv")
-
     fname_bold = "F_Bold" if font_bold_file else "hebo"
-    if font_bold_file:
-        page.insert_font(fontname=fname_bold, fontbuffer=font_bold_file.getvalue())
-    font_obj_bold = fitz.Font(fontbuffer=font_bold_file.getvalue()) if font_bold_file else fitz.Font("hebo")
-
     fname_disp = "F_Disp" if font_display_file else fname_bold
-    if font_display_file:
-        page.insert_font(fontname=fname_disp, fontbuffer=font_display_file.getvalue())
+
+    def registrar_fuentes_en_pagina(p):
+        if font_regular_file:
+            p.insert_font(fontname=fname_reg, fontbuffer=font_regular_file.getvalue())
+        if font_bold_file:
+            p.insert_font(fontname=fname_bold, fontbuffer=font_bold_file.getvalue())
+        if font_display_file:
+            p.insert_font(fontname=fname_disp, fontbuffer=font_display_file.getvalue())
+
+    registrar_fuentes_en_pagina(page1)
+
+    font_obj_reg = fitz.Font(fontbuffer=font_regular_file.getvalue()) if font_regular_file else fitz.Font("helv")
+    font_obj_bold = fitz.Font(fontbuffer=font_bold_file.getvalue()) if font_bold_file else fitz.Font("hebo")
     font_obj_disp = fitz.Font(fontbuffer=font_display_file.getvalue()) if font_display_file else font_obj_bold
 
-    # 1. CABECERA
-    r_emitida = page.search_for("Emitida")
+    # 1. Cabecera en Página 1
+    r_emitida = page1.search_for("Emitida")
     if r_emitida:
         y_meta = r_emitida[0].y1 - 1.5
-        page.draw_rect(fitz.Rect(W * 0.55, r_emitida[0].y0 - 3, W * 0.95, r_emitida[0].y1 + 3), color=COLOR_BG_BLACK, fill=COLOR_BG_BLACK)
-        insertar_texto_derecha(page, W * 0.931, y_meta, f"N.º {num_cotizacion} · Emitida {fecha_emision}", font_obj_reg, fname_reg, 9.5, COLOR_HEADER_META)
+        page1.draw_rect(fitz.Rect(W * 0.55, r_emitida[0].y0 - 3, W * 0.95, r_emitida[0].y1 + 3), color=COLOR_BG_BLACK, fill=COLOR_BG_BLACK)
+        insertar_texto_derecha(page1, W * 0.931, y_meta, f"N.º {num_cotizacion} · Emitida {fecha_emision}", font_obj_reg, fname_reg, 9.5, COLOR_HEADER_META)
 
-    # 2. GRILLA DE 4 COLUMNAS
-    r_fecha_lbl = page.search_for("FECHA")
-    r_horario_lbl = page.search_for("HORARIO")
-    r_inv_lbl = page.search_for("INVITADOS")
-    r_esp_lbl = page.search_for("ESPACIO")
+    # 2. Grilla 4 columnas en Página 1
+    r_fecha_lbl = page1.search_for("FECHA")
+    r_horario_lbl = page1.search_for("HORARIO")
+    r_inv_lbl = page1.search_for("INVITADOS")
+    r_esp_lbl = page1.search_for("ESPACIO")
 
     if r_fecha_lbl and r_horario_lbl and r_inv_lbl and r_esp_lbl:
         y_top_val = r_fecha_lbl[0].y1 + 4
         y_base_val = r_fecha_lbl[0].y1 + 17
 
-        page.draw_rect(fitz.Rect(r_fecha_lbl[0].x0 - 2, y_top_val, r_horario_lbl[0].x0 - 15, y_top_val + 38), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
-        page.draw_rect(fitz.Rect(r_horario_lbl[0].x0 - 2, y_top_val, r_inv_lbl[0].x0 - 15, y_top_val + 38), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
-        page.draw_rect(fitz.Rect(r_inv_lbl[0].x0 - 2, y_top_val, r_esp_lbl[0].x0 - 15, y_top_val + 38), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
-        page.draw_rect(fitz.Rect(r_esp_lbl[0].x0 - 2, y_top_val, W * 0.94, y_top_val + 38), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
+        page1.draw_rect(fitz.Rect(r_fecha_lbl[0].x0 - 2, y_top_val, r_horario_lbl[0].x0 - 15, y_top_val + 38), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
+        page1.draw_rect(fitz.Rect(r_horario_lbl[0].x0 - 2, y_top_val, r_inv_lbl[0].x0 - 15, y_top_val + 38), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
+        page1.draw_rect(fitz.Rect(r_inv_lbl[0].x0 - 2, y_top_val, r_esp_lbl[0].x0 - 15, y_top_val + 38), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
+        page1.draw_rect(fitz.Rect(r_esp_lbl[0].x0 - 2, y_top_val, W * 0.94, y_top_val + 38), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
 
-        page.insert_text(fitz.Point(r_fecha_lbl[0].x0, y_base_val), fecha_evento, fontname=fname_bold, fontsize=11.5, color=COLOR_TEXT_BLACK)
-        page.insert_text(fitz.Point(r_horario_lbl[0].x0, y_base_val), horario, fontname=fname_bold, fontsize=11.5, color=COLOR_TEXT_BLACK)
-        page.insert_text(fitz.Point(r_inv_lbl[0].x0, y_base_val), invitados, fontname=fname_bold, fontsize=11.5, color=COLOR_TEXT_BLACK)
+        page1.insert_text(fitz.Point(r_fecha_lbl[0].x0, y_base_val), fecha_evento, fontname=fname_bold, fontsize=11.5, color=COLOR_TEXT_BLACK)
+        page1.insert_text(fitz.Point(r_horario_lbl[0].x0, y_base_val), horario, fontname=fname_bold, fontsize=11.5, color=COLOR_TEXT_BLACK)
+        page1.insert_text(fitz.Point(r_inv_lbl[0].x0, y_base_val), invitados, fontname=fname_bold, fontsize=11.5, color=COLOR_TEXT_BLACK)
 
         for idx, lin in enumerate(espacio.split("\n")[:2]):
-            page.insert_text(fitz.Point(r_esp_lbl[0].x0, y_base_val + (idx * 14)), lin, fontname=fname_bold, fontsize=11.5, color=COLOR_TEXT_BLACK)
+            page1.insert_text(fitz.Point(r_esp_lbl[0].x0, y_base_val + (idx * 14)), lin, fontname=fname_bold, fontsize=11.5, color=COLOR_TEXT_BLACK)
 
-    # 3. SECCIÓN 01 COMIDA Y 02 BEBESTIBLES
-    r_comida = page.search_for("COMIDA")
-    r_bebestibles = page.search_for("BEBESTIBLES")
-    r_valores = page.search_for("VALORES")
+    # 3. Posicionamiento dinámico multicanal
+    r_comida = page1.search_for("COMIDA")
+    r_bebestibles = page1.search_for("BEBESTIBLES")
+    r_valores = page1.search_for("VALORES")
 
     if r_comida and r_bebestibles and r_valores:
-        rects_01 = [r for r in page.search_for("01") if abs(r.y0 - r_comida[0].y0) < 15]
-        rects_02 = [r for r in page.search_for("02") if abs(r.y0 - r_bebestibles[0].y0) < 15]
+        rects_01 = [r for r in page1.search_for("01") if abs(r.y0 - r_comida[0].y0) < 15]
+        rects_02 = [r for r in page1.search_for("02") if abs(r.y0 - r_bebestibles[0].y0) < 15]
 
         x_col1 = rects_01[0].x0 if rects_01 else (r_fecha_lbl[0].x0 if r_fecha_lbl else W * 0.068)
         x_col2 = rects_02[0].x0 if rects_02 else (r_bebestibles[0].x0 - 22)
         x_der = W * 0.931
-
         ancho_max_col1 = (x_col2 - x_col1) - 24
+        ancho_max_col2 = x_der - (x_col2 + 46)
+
         y_inicio_secciones = r_comida[0].y1 + 8
         y_original_valores = r_valores[0].y0
 
-        # --- CÁLCULO PREVIO DE ALTURAS PARA COMIDA Y BEBESTIBLES ---
-        y_cursor_c_sim = y_inicio_secciones
+        # Límites verticales
+        LIMITE_Y_PAGINA = H * 0.925   # Margen inferior antes del pie de página
+        ALTO_BLOQUE_PAGO = 145        # Caja Total Evento + Forma de Pago + Transferencia
+
+        # Limpiar área editable en página 1
+        page1.draw_rect(fitz.Rect(0, y_inicio_secciones - 4, W, H), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
+
+        # Referencia al documento original para clonar encabezados y footer
+        doc_orig = fitz.open(stream=raw_pdf_bytes, filetype="pdf")
+        r_total_orig = doc_orig[0].search_for("TOTAL EVENTO")[0]
+        y_caja_negra_orig = r_total_orig.y0 - 17
+        alto_bloque_pago_real = (H * 0.82) - y_caja_negra_orig
+
+        def crear_nueva_pagina():
+            nueva_p = doc.new_page(width=W, height=H)
+            nueva_p.draw_rect(nueva_p.rect, color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
+            registrar_fuentes_en_pagina(nueva_p)
+            return nueva_p
+
+        # --- DIBUJO DE COMIDA Y BEBESTIBLES CON SALTO INTELIGENTE ---
+        # Calculamos cuánto cabe en Página 1
+        y_c = y_inicio_secciones
         if formato_comida.strip():
-            y_cursor_c_sim += 20
-        for item_c in st.session_state.comidas:
-            tit = item_c["titulo"].strip()
-            pils = [p.strip() for p in item_c["pildoras"].split(",") if p.strip()]
-            if tit:
-                num_lineas_t = len(envolver_texto(tit, font_obj_bold, 12.0, ancho_max_col1))
-                y_cursor_c_sim += num_lineas_t * 16 + 4
-            if pils:
-                y_cursor_c_sim += 12 + simular_altura_pildoras(ancho_max_col1, pils, font_obj_reg, 9.5)
-            y_cursor_c_sim += 14
+            y_c += 12
+            page1.insert_text(fitz.Point(x_col1, y_c), " ".join(list(formato_comida.strip().upper())), fontname=fname_reg, fontsize=7.5, color=COLOR_TEXT_GRAY)
+            y_c += 8
 
-        y_cursor_b_sim = y_inicio_secciones + 4
-        ancho_max_texto_beb = x_der - (x_col2 + 46)
-        items_beb_validos = [b for b in st.session_state.bebestibles if b["cant"].strip() or b["titulo"].strip() or b["desc"].strip()]
-        for item_b in items_beb_validos:
-            tit_b = item_b["titulo"].strip()
-            desc_b = item_b["desc"].strip()
-            altura_bloque_b = 26
-            if tit_b:
-                altura_bloque_b += len(envolver_texto(tit_b, font_obj_bold, 10.0, ancho_max_texto_beb)) * 13
-            if desc_b:
-                altura_bloque_b += len(envolver_texto(desc_b, font_obj_reg, 9.8, ancho_max_texto_beb)) * 13
-            y_cursor_b_sim += altura_bloque_b + 14
-
-        # Determinar nueva posición de VALORES basada en el contenido real
-        y_max_contenido = max(y_cursor_c_sim, y_cursor_b_sim)
-        y_nuevo_valores = max(y_original_valores, y_max_contenido + 10)
-        desplazamiento_y = y_nuevo_valores - y_original_valores
-
-        # LIMPIAR COMPLETAMENTE TODO EL BLOQUE CENTRAL SUPERIOR E INTERMEDIO
-        page.draw_rect(fitz.Rect(0, y_inicio_secciones - 4, W, H * 0.85), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
-
-        # --- DIBUJAR 01 COMIDA ---
-        y_cursor_c = y_inicio_secciones
-        if formato_comida.strip():
-            y_cursor_c += 12
-            page.insert_text(fitz.Point(x_col1, y_cursor_c), " ".join(list(formato_comida.strip().upper())), fontname=fname_reg, fontsize=7.5, color=COLOR_TEXT_GRAY)
-            y_cursor_c += 8
-
+        comidas_p1, comidas_restantes = [], []
         for idx, item_c in enumerate(st.session_state.comidas):
             tit = item_c["titulo"].strip()
             pils = [p.strip() for p in item_c["pildoras"].split(",") if p.strip()]
-
-            if tit:
-                for l_tit in envolver_texto(tit, font_obj_bold, 12.0, ancho_max_col1):
-                    y_cursor_c += 16
-                    page.insert_text(fitz.Point(x_col1, y_cursor_c), l_tit, fontname=fname_bold, fontsize=12.0, color=COLOR_TEXT_BLACK)
-
+            alt_est = len(envolver_texto(tit, font_obj_bold, 12.0, ancho_max_col1)) * 16 + 20
             if pils:
-                y_cursor_c += 12
-                y_cursor_c = dibujar_pildoras(page, x_col1, y_cursor_c, ancho_max_col1, pils, font_obj_reg, fname_reg, 9.5, COLOR_BG_CREAM)
+                alt_est += 14 + (len(pils) // 2 + 1) * 20
+            if y_c + alt_est < LIMITE_Y_PAGINA - 80:
+                comidas_p1.append(item_c)
+                if tit:
+                    for l_tit in envolver_texto(tit, font_obj_bold, 12.0, ancho_max_col1):
+                        y_c += 16
+                        page1.insert_text(fitz.Point(x_col1, y_c), l_tit, fontname=fname_bold, fontsize=12.0, color=COLOR_TEXT_BLACK)
+                if pils:
+                    y_c += 12
+                    y_c = dibujar_pildoras(page1, x_col1, y_c, ancho_max_col1, pils, font_obj_reg, fname_reg, 9.5, COLOR_BG_CREAM)
+                y_c += 10
+                page1.draw_line(fitz.Point(x_col1, y_c), fitz.Point(x_col1 + ancho_max_col1, y_c), color=COLOR_LINE_GRAY, width=0.8)
+                y_c += 4
+            else:
+                comidas_restantes.append(item_c)
 
-            if idx < len(st.session_state.comidas) - 1 and (tit or pils):
-                y_cursor_c += 10
-                page.draw_line(fitz.Point(x_col1, y_cursor_c), fitz.Point(x_col1 + ancho_max_col1, y_cursor_c), color=COLOR_LINE_GRAY, width=0.8)
-                y_cursor_c += 4
-
-        # --- DIBUJAR 02 BEBESTIBLES ---
-        y_cursor_b = y_inicio_secciones + 4
-        x_texto_beb = x_col2 + 46
+        y_b = y_inicio_secciones + 4
+        items_beb_validos = [b for b in st.session_state.bebestibles if b["cant"].strip() or b["titulo"].strip() or b["desc"].strip()]
+        bebestibles_p1, bebestibles_restantes = [], []
 
         for idx, item_b in enumerate(items_beb_validos):
             cant_str = item_b["cant"].strip()
             tit_b = item_b["titulo"].strip()
             desc_b = item_b["desc"].strip()
+            alt_b_est = 35 + len(envolver_texto(desc_b, font_obj_reg, 9.8, ancho_max_col2)) * 13
 
-            y_num_base = y_cursor_b + 21
-            page.insert_text(fitz.Point(x_col2, y_num_base), cant_str, fontname=fname_disp, fontsize=20, color=COLOR_TEXT_BLACK)
+            if y_b + alt_b_est < LIMITE_Y_PAGINA - 80:
+                bebestibles_p1.append(item_b)
+                page1.insert_text(fitz.Point(x_col2, y_b + 21), cant_str, fontname=fname_disp, fontsize=20, color=COLOR_TEXT_BLACK)
+                y_txt_b = y_b + 12
+                if tit_b:
+                    for l_tb in envolver_texto(tit_b, font_obj_bold, 10.0, ancho_max_col2):
+                        page1.insert_text(fitz.Point(x_col2 + 46, y_txt_b), l_tb, fontname=fname_bold, fontsize=10.0, color=COLOR_TEXT_BLACK)
+                        y_txt_b += 13
+                if desc_b:
+                    for l_db in envolver_texto(desc_b, font_obj_reg, 9.8, ancho_max_col2):
+                        page1.insert_text(fitz.Point(x_col2 + 46, y_txt_b), l_db, fontname=fname_reg, fontsize=9.8, color=COLOR_TEXT_BLACK)
+                        y_txt_b += 13
+                y_b = max(y_b + 27, y_txt_b - 4) + 8
+                page1.draw_line(fitz.Point(x_col2, y_b), fitz.Point(x_der, y_b), color=COLOR_LINE_GRAY, width=0.8)
+                y_b += 6
+            else:
+                bebestibles_restantes.append(item_b)
 
-            y_txt_b = y_cursor_b + 12
-            if tit_b:
-                for l_tb in envolver_texto(tit_b, font_obj_bold, 10.0, ancho_max_texto_beb):
-                    page.insert_text(fitz.Point(x_texto_beb, y_txt_b), l_tb, fontname=fname_bold, fontsize=10.0, color=COLOR_TEXT_BLACK)
-                    y_txt_b += 13
+        y_max_p1 = max(y_c, y_b)
 
-            if desc_b:
-                for l_db in envolver_texto(desc_b, font_obj_reg, 9.8, ancho_max_texto_beb):
-                    page.insert_text(fitz.Point(x_texto_beb, y_txt_b), l_db, fontname=fname_reg, fontsize=9.8, color=COLOR_TEXT_BLACK)
-                    y_txt_b += 13
-
-            y_cursor_b = max(y_num_base + 6, y_txt_b - 4)
-
-            if idx < len(items_beb_validos) - 1:
-                y_cursor_b += 8
-                page.draw_line(fitz.Point(x_col2, y_cursor_b), fitz.Point(x_der, y_cursor_b), color=COLOR_LINE_GRAY, width=0.8)
-                y_cursor_b += 6
-
-        # --- 4. RENDERIZAR 03 VALORES Y BLOQUE INFERIOR DESPLAZADOS ---
-        doc_orig = fitz.open(stream=raw_pdf_bytes, filetype="pdf")
-
-        # Estampar el título original "03 VALORES" y su línea superior en la nueva posición calculada
-        page.show_pdf_page(fitz.Rect(0, y_nuevo_valores - 4, W, y_nuevo_valores + 28), doc_orig, 0, clip=fitz.Rect(0, y_original_valores - 4, W, y_original_valores + 28))
-
+        # Preparar datos de valores
         filas_valores = [(v["concepto"].strip(), v["nota"].strip(), v["monto"]) for v in st.session_state.valores_items if v["concepto"].strip() or v["monto"] > 0]
         if incluir_propina:
             filas_valores.append(("Propina sugerida 10%", "", monto_propina))
+        alto_tabla_val = 35 + (len(filas_valores) * 28)
+        alto_obs_est = (len(envolver_texto(observaciones.strip(), font_obj_reg, 9.5, x_der - x_col1)) * 13 + 30) if observaciones.strip() else 0
 
-        r_total_lbl_orig = doc_orig[0].search_for("TOTAL EVENTO")[0]
-        y_caja_negra_orig_top = r_total_lbl_orig.y0 - 17
+        # Función auxiliar para renderizar bloque de valores
+        def render_seccion_valores(target_page, y_start):
+            target_page.show_pdf_page(fitz.Rect(0, y_start - 4, W, y_start + 28), doc_orig, 0, clip=fitz.Rect(0, y_original_valores - 4, W, y_original_valores + 28))
+            y_f = y_start + r_valores[0].height + 30
+            for idx, (concepto, nota, monto) in enumerate(filas_valores):
+                target_page.insert_text(fitz.Point(x_col1, y_f), concepto, fontname=fname_reg, fontsize=10.5, color=COLOR_TEXT_BLACK)
+                if nota:
+                    target_page.insert_text(fitz.Point(x_col1 + font_obj_reg.text_length(concepto + " ", fontsize=10.5), y_f), nota, fontname=fname_reg, fontsize=10.5, color=COLOR_TEXT_GRAY)
+                insertar_texto_derecha(target_page, x_der, y_f, formato_clp(monto), font_obj_bold, fname_bold, 11, COLOR_TEXT_BLACK)
+                if idx < len(filas_valores) - 1:
+                    target_page.draw_line(fitz.Point(x_col1, y_f + 10), fitz.Point(x_der, y_f + 10), color=COLOR_LINE_GRAY, width=0.8)
+                y_f += 28
+            return y_f
 
-        y_inicio_filas_val = y_nuevo_valores + r_valores[0].height + 14
-        alto_fila_val = 28
-        y_caja_negra_nuevo_top = max(y_caja_negra_orig_top + desplazamiento_y, y_inicio_filas_val + (len(filas_valores) * alto_fila_val) + 6)
+        # Función auxiliar para renderizar bloque inferior de pago
+        def render_bloque_pago(target_page, y_top):
+            target_page.show_pdf_page(fitz.Rect(0, y_top, W, y_top + alto_bloque_pago_real), doc_orig, 0, clip=fitz.Rect(0, y_caja_negra_orig, W, H * 0.82))
+            offset = y_top - y_caja_negra_orig
+            target_page.draw_rect(fitz.Rect(W * 0.55, r_total_orig.y0 + offset - 10, x_der - 8, r_total_orig.y1 + offset + 10), color=COLOR_BG_BLACK, fill=COLOR_BG_BLACK)
+            insertar_texto_derecha(target_page, x_der - 16, r_total_orig.y1 + offset + 3, formato_clp(total_evento), font_obj_disp, fname_disp, 22, COLOR_GOLD)
 
-        # Dibujar filas de valores
-        y_fila = y_inicio_filas_val + 16
-        for idx, (concepto, nota, monto) in enumerate(filas_valores):
-            page.insert_text(fitz.Point(x_col1, y_fila), concepto, fontname=fname_reg, fontsize=10.5, color=COLOR_TEXT_BLACK)
-            if nota:
-                page.insert_text(fitz.Point(x_col1 + font_obj_reg.text_length(concepto + " ", fontsize=10.5), y_fila), nota, fontname=fname_reg, fontsize=10.5, color=COLOR_TEXT_GRAY)
+        # DECISIÓN INTELIGENTE: ¿1, 2 o 3 páginas?
+        hay_desborde_items = bool(comidas_restantes or bebestibles_restantes)
+        cabe_todo_en_p1 = (not hay_desborde_items) and ((y_max_p1 + alto_tabla_val + alto_obs_est + ALTO_BLOQUE_PAGO) < LIMITE_Y_PAGINA)
 
-            insertar_texto_derecha(page, x_der, y_fila, formato_clp(monto), font_obj_bold, fname_bold, 11, COLOR_TEXT_BLACK)
+        if cabe_todo_en_p1:
+            # === CASO: 1 PÁGINA ===
+            y_val_p1 = max(y_original_valores, y_max_p1 + 12)
+            y_fin_val_p1 = render_seccion_valores(page1, y_val_p1)
+            y_obs_p1 = y_fin_val_p1 + 6
+            if observaciones.strip():
+                page1.insert_text(fitz.Point(x_col1, y_obs_p1), "OBSERVACIONES", fontname=fname_bold, fontsize=9.0, color=COLOR_TEXT_GRAY)
+                y_obs_p1 += 12
+                for l_obs in envolver_texto(observaciones.strip(), font_obj_reg, 9.5, x_der - x_col1):
+                    page1.insert_text(fitz.Point(x_col1, y_obs_p1), l_obs, fontname=fname_reg, fontsize=9.5, color=COLOR_TEXT_BLACK)
+                    y_obs_p1 += 13
+                y_obs_p1 += 8
+            render_bloque_pago(page1, max(y_obs_p1 + 6, y_caja_negra_orig + (y_val_p1 - y_original_valores)))
+            page1.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
 
-            if idx < len(filas_valores) - 1:
-                page.draw_line(fitz.Point(x_col1, y_fila + 10), fitz.Point(x_der, y_fila + 10), color=COLOR_LINE_GRAY, width=0.8)
-            y_fila += alto_fila_val
+        else:
+            # Cierra pie de página 1
+            page1.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
 
-        # Estampar bloque inferior completo (Total, Forma de pago, Transferencia) en la nueva posición
-        page.show_pdf_page(fitz.Rect(0, y_caja_negra_nuevo_top, W, y_caja_negra_nuevo_top + ((H * 0.80) - y_caja_negra_orig_top)), doc_orig, 0, clip=fitz.Rect(0, y_caja_negra_orig_top, W, H * 0.80))
+            # === PÁGINA 2 ===
+            page2 = crear_nueva_pagina()
+            y_p2 = 45
 
-        # Actualizar monto total en la franja negra
-        offset_inf = y_caja_negra_nuevo_top - y_caja_negra_orig_top
-        y_tot_top = r_total_lbl_orig.y0 + offset_inf
-        y_tot_bot = r_total_lbl_orig.y1 + offset_inf
-        page.draw_rect(fitz.Rect(W * 0.55, y_tot_top - 10, x_der - 8, y_tot_bot + 10), color=COLOR_BG_BLACK, fill=COLOR_BG_BLACK)
-        insertar_texto_derecha(page, x_der - 16, y_tot_bot + 3, formato_clp(total_evento), font_obj_disp, fname_disp, 22, COLOR_GOLD)
+            # Si quedaron comidas o bebestibles pendientes, se dibujan arriba en página 2
+            if hay_desborde_items:
+                y_c2, y_b2 = y_p2, y_p2
+                for item_c in comidas_restantes:
+                    tit = item_c["titulo"].strip()
+                    pils = [p.strip() for p in item_c["pildoras"].split(",") if p.strip()]
+                    if tit:
+                        for l_tit in envolver_texto(tit, font_obj_bold, 12.0, ancho_max_col1):
+                            y_c2 += 16
+                            page2.insert_text(fitz.Point(x_col1, y_c2), l_tit, fontname=fname_bold, fontsize=12.0, color=COLOR_TEXT_BLACK)
+                    if pils:
+                        y_c2 += 12
+                        y_c2 = dibujar_pildoras(page2, x_col1, y_c2, ancho_max_col1, pils, font_obj_reg, fname_reg, 9.5, COLOR_BG_CREAM)
+                    y_c2 += 12
+                    page2.draw_line(fitz.Point(x_col1, y_c2), fitz.Point(x_col1 + ancho_max_col1, y_c2), color=COLOR_LINE_GRAY, width=0.8)
+                    y_c2 += 4
+
+                for item_b in bebestibles_restantes:
+                    cant_str = item_b["cant"].strip()
+                    tit_b = item_b["titulo"].strip()
+                    desc_b = item_b["desc"].strip()
+                    page2.insert_text(fitz.Point(x_col2, y_b2 + 21), cant_str, fontname=fname_disp, fontsize=20, color=COLOR_TEXT_BLACK)
+                    y_txt_b = y_b2 + 12
+                    if tit_b:
+                        for l_tb in envolver_texto(tit_b, font_obj_bold, 10.0, ancho_max_col2):
+                            page2.insert_text(fitz.Point(x_col2 + 46, y_txt_b), l_tb, fontname=fname_bold, fontsize=10.0, color=COLOR_TEXT_BLACK)
+                            y_txt_b += 13
+                    if desc_b:
+                        for l_db in envolver_texto(desc_b, font_obj_reg, 9.8, ancho_max_col2):
+                            page2.insert_text(fitz.Point(x_col2 + 46, y_txt_b), l_db, fontname=fname_reg, fontsize=9.8, color=COLOR_TEXT_BLACK)
+                            y_txt_b += 13
+                    y_b2 = max(y_b2 + 27, y_txt_b - 4) + 8
+                    page2.draw_line(fitz.Point(x_col2, y_b2), fitz.Point(x_der, y_b2), color=COLOR_LINE_GRAY, width=0.8)
+                    y_b2 += 6
+
+                y_p2 = max(y_c2, y_b2) + 16
+
+            # Evaluamos si en Página 2 cabe Valores + Observaciones + Pagos
+            cabe_todo_en_p2 = (y_p2 + alto_tabla_val + alto_obs_est + ALTO_BLOQUE_PAGO) < LIMITE_Y_PAGINA
+
+            if cabe_todo_en_p2:
+                # Todo entra en Página 2 (Total: 2 páginas)
+                y_fin_val_p2 = render_seccion_valores(page2, y_p2)
+                y_obs_p2 = y_fin_val_p2 + 6
+                if observaciones.strip():
+                    page2.insert_text(fitz.Point(x_col1, y_obs_p2), "OBSERVACIONES", fontname=fname_bold, fontsize=9.0, color=COLOR_TEXT_GRAY)
+                    y_obs_p2 += 12
+                    for l_obs in envolver_texto(observaciones.strip(), font_obj_reg, 9.5, x_der - x_col1):
+                        page2.insert_text(fitz.Point(x_col1, y_obs_p2), l_obs, fontname=fname_reg, fontsize=9.5, color=COLOR_TEXT_BLACK)
+                        y_obs_p2 += 13
+                    y_obs_p2 += 10
+                render_bloque_pago(page2, max(y_obs_p2 + 8, y_caja_negra_orig))
+                page2.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
+
+            else:
+                # === CASO: 3 PÁGINAS ===
+                # En página 2 colocamos los valores (y observaciones si alcanzan)
+                y_fin_val_p2 = render_seccion_valores(page2, y_p2)
+                page2.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
+
+                # Crear Página 3 para Observaciones y Pagos
+                page3 = crear_nueva_pagina()
+                y_p3 = 50
+
+                if observaciones.strip():
+                    page3.insert_text(fitz.Point(x_col1, y_p3), "OBSERVACIONES", fontname=fname_bold, fontsize=10.0, color=COLOR_TEXT_GRAY)
+                    y_p3 += 16
+                    for l_obs in envolver_texto(observaciones.strip(), font_obj_reg, 9.8, x_der - x_col1):
+                        page3.insert_text(fitz.Point(x_col1, y_p3), l_obs, fontname=fname_reg, fontsize=9.8, color=COLOR_TEXT_BLACK)
+                        y_p3 += 14
+                    y_p3 += 20
+
+                render_bloque_pago(page3, max(y_p3 + 10, 220))
+                page3.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
+
         doc_orig.close()
 
-    # Vista previa
-    pix = page.get_pixmap(dpi=200)
+    # Guardar y previsualizar de forma segura
     pdf_out = io.BytesIO()
     doc.save(pdf_out)
-    doc.close()
 
     with col_preview:
         st.subheader("Vista Previa en Tiempo Real")
-        st.download_button("Descargar Cotización en PDF", data=pdf_out.getvalue(), file_name=f"Cotizacion_El_Bajo_{num_cotizacion.strip('[]')}.pdf", mime="application/pdf", use_container_width=True)
-        st.image(pix.tobytes("png"), use_container_width=True)
+        st.download_button(
+            "Descargar Cotización en PDF",
+            data=pdf_out.getvalue(),
+            file_name=f"Cotizacion_El_Bajo_{num_cotizacion.strip('[]')}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+
+        for num_p, p in enumerate(doc):
+            pix = p.get_pixmap(dpi=150)
+            st.caption(f"Página {num_p + 1}")
+            st.image(pix.tobytes("png"), use_container_width=True)
+
+    doc.close()
 else:
     with col_preview:
         st.info("Sube el archivo PDF original en el menú izquierdo para comenzar.")
