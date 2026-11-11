@@ -1,6 +1,7 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import io
+import re
 
 st.set_page_config(page_title="Generador de Cotizaciones - El Bajo", layout="wide")
 
@@ -9,10 +10,19 @@ COLOR_TEXT_GRAY = (115 / 255, 110 / 255, 100 / 255)
 COLOR_HEADER_META = (184 / 255, 179 / 255, 168 / 255)
 COLOR_GOLD = (221 / 255, 160 / 255, 50 / 255)
 COLOR_LINE_GRAY = (214 / 255, 209 / 255, 196 / 255)
+COLOR_WHITE = (1.0, 1.0, 1.0)
 
 
 def formato_clp(valor: int) -> str:
     return f"${valor:,.0f}".replace(",", ".")
+
+
+def extraer_numero_invitados(texto: str) -> int:
+    """Extrae el primer número entero encontrado en el campo INVITADOS (ej: '40 aprox.' -> 40)."""
+    coincidencias = re.findall(r"\d+", texto)
+    if coincidencias:
+        return int(coincidencias[0])
+    return 1
 
 
 def muestrear_color_pdf(page, x: float, y: float) -> tuple:
@@ -39,6 +49,30 @@ def envolver_texto(texto: str, font_obj, font_size: float, ancho_max: float) -> 
     return lineas_resultado
 
 
+def simular_altura_pildoras(ancho_max, items, font_obj, font_size):
+    if not items:
+        return 0
+    x_actual = 0
+    filas = 1
+    pad_x = 10
+    pad_y = 4.5
+    alto_pildora = font_size + (pad_y * 2)
+    espacio_x = 6
+    espacio_y = 6
+
+    for item in items:
+        texto = item.strip()
+        if not texto:
+            continue
+        ancho_pildora = font_obj.text_length(texto, fontsize=font_size) + (pad_x * 2)
+        if x_actual + ancho_pildora > ancho_max and x_actual > 0:
+            x_actual = 0
+            filas += 1
+        x_actual += ancho_pildora + espacio_x
+
+    return filas * (alto_pildora + espacio_y)
+
+
 def dibujar_pildoras(page, x_inicio, y_inicio, ancho_max, items, font_obj, font_name, font_size, bg_cream):
     x_actual = x_inicio
     y_actual = y_inicio
@@ -53,6 +87,7 @@ def dibujar_pildoras(page, x_inicio, y_inicio, ancho_max, items, font_obj, font_
         if not texto:
             continue
         ancho_pildora = font_obj.text_length(texto, fontsize=font_size) + (pad_x * 2)
+
         if x_actual + ancho_pildora > x_inicio + ancho_max and x_actual > x_inicio:
             x_actual = x_inicio
             y_actual += alto_pildora + espacio_y
@@ -95,6 +130,14 @@ st.title("Generador de Cotizaciones · El Bajo")
 with st.sidebar:
     st.header("1. Plantilla Base y Fuentes")
     pdf_base = st.file_uploader("Sube el PDF original de referencia", type=["pdf"])
+
+    st.markdown("---")
+    st.subheader("Modo de Cierre de Cotización")
+    modo_cierre = st.radio(
+        "Formato del bloque principal de cobro:",
+        options=["Total Evento (Tradicional)", "Valor por Persona + Propina Total"],
+        index=0
+    )
 
     st.markdown("---")
     st.subheader("Tipografías (.ttf / .otf)")
@@ -196,7 +239,7 @@ with col_form:
     st.markdown("##### Propina")
     vp1, vp2, vp3 = st.columns([2, 2, 2])
     with vp1:
-        incluir_propina = st.checkbox("Incluir línea de propina", value=True)
+        incluir_propina = st.checkbox("Incluir propina sugerida 10%", value=True)
     with vp2:
         propina_auto = st.checkbox("Calcular 10% automático", value=True, disabled=not incluir_propina)
     with vp3:
@@ -206,7 +249,16 @@ with col_form:
 
     subtotal_items = sum(i["monto"] for i in st.session_state.valores_items)
     total_evento = subtotal_items + (monto_propina if incluir_propina else 0)
-    st.markdown(f"**TOTAL EVENTO:** `{formato_clp(total_evento)}`")
+
+    num_personas = extraer_numero_invitados(invitados)
+    if num_personas <= 0:
+        num_personas = 1
+    valor_x_persona = int(round(subtotal_items / num_personas))
+
+    if modo_cierre == "Total Evento (Tradicional)":
+        st.markdown(f"**TOTAL EVENTO:** `{formato_clp(total_evento)}`")
+    else:
+        st.markdown(f"**VALOR X PERSONA:** `{formato_clp(valor_x_persona)}` | **PROPINA TOTAL:** `{formato_clp(monto_propina)}` (base {num_personas} personas)")
 
     st.markdown("---")
     st.subheader("Observaciones / Comentarios (Opcional)")
@@ -228,7 +280,7 @@ if pdf_base is not None:
     COLOR_BG_BLACK = muestrear_color_pdf(page1, W * 0.50, 15)
     COLOR_BG_CREAM = muestrear_color_pdf(page1, W * 0.50, H * 0.90)
 
-    # Configuración de fuentes
+    # Fuentes
     fname_reg = "F_Reg" if font_regular_file else "helv"
     fname_bold = "F_Bold" if font_bold_file else "hebo"
     fname_disp = "F_Disp" if font_display_file else fname_bold
@@ -294,14 +346,11 @@ if pdf_base is not None:
         y_inicio_secciones = r_comida[0].y1 + 8
         y_original_valores = r_valores[0].y0
 
-        # Límites verticales
-        LIMITE_Y_PAGINA = H * 0.925   # Margen inferior antes del pie de página
-        ALTO_BLOQUE_PAGO = 145        # Caja Total Evento + Forma de Pago + Transferencia
+        LIMITE_Y_PAGINA = H * 0.925
+        ALTO_BLOQUE_PAGO = 145
 
-        # Limpiar área editable en página 1
         page1.draw_rect(fitz.Rect(0, y_inicio_secciones - 4, W, H), color=COLOR_BG_CREAM, fill=COLOR_BG_CREAM)
 
-        # Referencia al documento original para clonar encabezados y footer
         doc_orig = fitz.open(stream=raw_pdf_bytes, filetype="pdf")
         r_total_orig = doc_orig[0].search_for("TOTAL EVENTO")[0]
         y_caja_negra_orig = r_total_orig.y0 - 17
@@ -313,8 +362,7 @@ if pdf_base is not None:
             registrar_fuentes_en_pagina(nueva_p)
             return nueva_p
 
-        # --- DIBUJO DE COMIDA Y BEBESTIBLES CON SALTO INTELIGENTE ---
-        # Calculamos cuánto cabe en Página 1
+        # Dibujar comida en P1
         y_c = y_inicio_secciones
         if formato_comida.strip():
             y_c += 12
@@ -343,6 +391,7 @@ if pdf_base is not None:
             else:
                 comidas_restantes.append(item_c)
 
+        # Dibujar bebestibles en P1
         y_b = y_inicio_secciones + 4
         items_beb_validos = [b for b in st.session_state.bebestibles if b["cant"].strip() or b["titulo"].strip() or b["desc"].strip()]
         bebestibles_p1, bebestibles_restantes = [], []
@@ -373,14 +422,15 @@ if pdf_base is not None:
 
         y_max_p1 = max(y_c, y_b)
 
-        # Preparar datos de valores
+        # Filtrar filas de valores
         filas_valores = [(v["concepto"].strip(), v["nota"].strip(), v["monto"]) for v in st.session_state.valores_items if v["concepto"].strip() or v["monto"] > 0]
-        if incluir_propina:
+        # Si estamos en modo tradicional y se incluye propina, va como fila en la tabla
+        if modo_cierre == "Total Evento (Tradicional)" and incluir_propina:
             filas_valores.append(("Propina sugerida 10%", "", monto_propina))
+
         alto_tabla_val = 35 + (len(filas_valores) * 28)
         alto_obs_est = (len(envolver_texto(observaciones.strip(), font_obj_reg, 9.5, x_der - x_col1)) * 13 + 30) if observaciones.strip() else 0
 
-        # Función auxiliar para renderizar bloque de valores
         def render_seccion_valores(target_page, y_start):
             target_page.show_pdf_page(fitz.Rect(0, y_start - 4, W, y_start + 28), doc_orig, 0, clip=fitz.Rect(0, y_original_valores - 4, W, y_original_valores + 28))
             y_f = y_start + r_valores[0].height + 30
@@ -394,19 +444,39 @@ if pdf_base is not None:
                 y_f += 28
             return y_f
 
-        # Función auxiliar para renderizar bloque inferior de pago
         def render_bloque_pago(target_page, y_top):
+            # Dibuja la base original de caja negra + forma de pago + datos de transferencia
             target_page.show_pdf_page(fitz.Rect(0, y_top, W, y_top + alto_bloque_pago_real), doc_orig, 0, clip=fitz.Rect(0, y_caja_negra_orig, W, H * 0.82))
             offset = y_top - y_caja_negra_orig
-            target_page.draw_rect(fitz.Rect(W * 0.55, r_total_orig.y0 + offset - 10, x_der - 8, r_total_orig.y1 + offset + 10), color=COLOR_BG_BLACK, fill=COLOR_BG_BLACK)
-            insertar_texto_derecha(target_page, x_der - 16, r_total_orig.y1 + offset + 3, formato_clp(total_evento), font_obj_disp, fname_disp, 22, COLOR_GOLD)
 
-        # DECISIÓN INTELIGENTE: ¿1, 2 o 3 páginas?
+            # Limpia el interior completo de la caja negra para renderizar el modo seleccionado
+            rect_interior_caja = fitz.Rect(x_col1 - 20, y_top + 2, x_der + 20, y_top + (r_total_orig.y1 - r_total_orig.y0) + 30)
+            target_page.draw_rect(rect_interior_caja, color=COLOR_BG_BLACK, fill=COLOR_BG_BLACK)
+
+            y_texto_base = r_total_orig.y1 + offset + 3
+
+            if modo_cierre == "Total Evento (Tradicional)":
+                # Formato clásico original
+                target_page.insert_text(fitz.Point(x_col1 + 10, y_texto_base - 3), "TOTAL EVENTO", fontname=fname_bold, fontsize=11.5, color=COLOR_WHITE)
+                insertar_texto_derecha(target_page, x_der - 16, y_texto_base, formato_clp(total_evento), font_obj_disp, fname_disp, 22, COLOR_GOLD)
+            else:
+                # Formato: Valor por Persona + Propina Total
+                target_page.insert_text(fitz.Point(x_col1 + 10, y_texto_base - 9), "VALOR POR PERSONA", fontname=fname_bold, fontsize=9.5, color=COLOR_WHITE)
+                txt_pp = f"{formato_clp(valor_x_persona)} p/p"
+                target_page.insert_text(fitz.Point(x_col1 + 10, y_texto_base + 10), txt_pp, fontname=fname_disp, fontsize=16, color=COLOR_GOLD)
+
+                # A la derecha: Propina Total
+                if incluir_propina:
+                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base - 9, "PROPINA TOTAL SUGERIDA", font_obj_bold, fname_bold, 9.0, COLOR_HEADER_META)
+                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base + 10, formato_clp(monto_propina), font_obj_disp, fname_disp, 16, COLOR_WHITE)
+                else:
+                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base + 3, f"{num_personas} INVITADOS", font_obj_disp, fname_disp, 14, COLOR_WHITE)
+
         hay_desborde_items = bool(comidas_restantes or bebestibles_restantes)
         cabe_todo_en_p1 = (not hay_desborde_items) and ((y_max_p1 + alto_tabla_val + alto_obs_est + ALTO_BLOQUE_PAGO) < LIMITE_Y_PAGINA)
 
         if cabe_todo_en_p1:
-            # === CASO: 1 PÁGINA ===
+            # === 1 PÁGINA ===
             y_val_p1 = max(y_original_valores, y_max_p1 + 12)
             y_fin_val_p1 = render_seccion_valores(page1, y_val_p1)
             y_obs_p1 = y_fin_val_p1 + 6
@@ -421,14 +491,12 @@ if pdf_base is not None:
             page1.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
 
         else:
-            # Cierra pie de página 1
             page1.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
 
             # === PÁGINA 2 ===
             page2 = crear_nueva_pagina()
             y_p2 = 45
 
-            # Si quedaron comidas o bebestibles pendientes, se dibujan arriba en página 2
             if hay_desborde_items:
                 y_c2, y_b2 = y_p2, y_p2
                 for item_c in comidas_restantes:
@@ -465,11 +533,10 @@ if pdf_base is not None:
 
                 y_p2 = max(y_c2, y_b2) + 16
 
-            # Evaluamos si en Página 2 cabe Valores + Observaciones + Pagos
             cabe_todo_en_p2 = (y_p2 + alto_tabla_val + alto_obs_est + ALTO_BLOQUE_PAGO) < LIMITE_Y_PAGINA
 
             if cabe_todo_en_p2:
-                # Todo entra en Página 2 (Total: 2 páginas)
+                # Cierra en Página 2
                 y_fin_val_p2 = render_seccion_valores(page2, y_p2)
                 y_obs_p2 = y_fin_val_p2 + 6
                 if observaciones.strip():
@@ -483,12 +550,10 @@ if pdf_base is not None:
                 page2.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
 
             else:
-                # === CASO: 3 PÁGINAS ===
-                # En página 2 colocamos los valores (y observaciones si alcanzan)
+                # === 3 PÁGINAS ===
                 y_fin_val_p2 = render_seccion_valores(page2, y_p2)
                 page2.show_pdf_page(fitz.Rect(0, H * 0.945, W, H), doc_orig, 0, clip=fitz.Rect(0, H * 0.945, W, H))
 
-                # Crear Página 3 para Observaciones y Pagos
                 page3 = crear_nueva_pagina()
                 y_p3 = 50
 
@@ -505,16 +570,17 @@ if pdf_base is not None:
 
         doc_orig.close()
 
-    # Guardar y previsualizar de forma segura
+    # Previsualización segura y descarga
     pdf_out = io.BytesIO()
     doc.save(pdf_out)
 
     with col_preview:
         st.subheader("Vista Previa en Tiempo Real")
+        sufijo_archivo = "Total" if modo_cierre.startswith("Total") else "PorPersona"
         st.download_button(
             "Descargar Cotización en PDF",
             data=pdf_out.getvalue(),
-            file_name=f"Cotizacion_El_Bajo_{num_cotizacion.strip('[]')}.pdf",
+            file_name=f"Cotizacion_El_Bajo_{num_cotizacion.strip('[]')}_{sufijo_archivo}.pdf",
             mime="application/pdf",
             use_container_width=True,
         )
