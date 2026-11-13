@@ -18,7 +18,6 @@ def formato_clp(valor: int) -> str:
 
 
 def extraer_numero_invitados(texto: str) -> int:
-    """Extrae el primer número entero encontrado en el campo INVITADOS (ej: '40 aprox.' -> 40)."""
     coincidencias = re.findall(r"\d+", texto)
     if coincidencias:
         return int(coincidencias[0])
@@ -47,6 +46,30 @@ def envolver_texto(texto: str, font_obj, font_size: float, ancho_max: float) -> 
         if linea_actual:
             lineas_resultado.append(linea_actual)
     return lineas_resultado
+
+
+def simular_altura_pildoras(ancho_max, items, font_obj, font_size):
+    if not items:
+        return 0
+    x_actual = 0
+    filas = 1
+    pad_x = 10
+    pad_y = 4.5
+    alto_pildora = font_size + (pad_y * 2)
+    espacio_x = 6
+    espacio_y = 6
+
+    for item in items:
+        texto = item.strip()
+        if not texto:
+            continue
+        ancho_pildora = font_obj.text_length(texto, fontsize=font_size) + (pad_x * 2)
+        if x_actual + ancho_pildora > ancho_max and x_actual > 0:
+            x_actual = 0
+            filas += 1
+        x_actual += ancho_pildora + espacio_x
+
+    return filas * (alto_pildora + espacio_y)
 
 
 def dibujar_pildoras(page, x_inicio, y_inicio, ancho_max, items, font_obj, font_name, font_size, bg_cream):
@@ -95,8 +118,8 @@ if "bebestibles" not in st.session_state:
 
 if "valores_items" not in st.session_state:
     st.session_state.valores_items = [
-        {"concepto": "Servicio de alimentos y bebestibles", "nota": "(IVA incluido)", "monto": 500000},
-        {"concepto": "Técnica · sonidista", "nota": "", "monto": 70000}
+        {"concepto": "Servicio de alimentos y bebestibles", "nota": "(IVA incluido)", "monto": 500000, "por_persona": True},
+        {"concepto": "Técnica · sonidista", "nota": "", "monto": 70000, "por_persona": False}
     ]
 
 
@@ -193,18 +216,31 @@ with col_form:
         st.subheader("03 VALORES")
     with col_v_btn:
         if st.button("+ Agregar Cobro", use_container_width=True):
-            st.session_state.valores_items.append({"concepto": "", "nota": "", "monto": 0})
+            st.session_state.valores_items.append({"concepto": "", "nota": "", "monto": 0, "por_persona": True})
             st.rerun()
 
     for idx, item_v in enumerate(st.session_state.valores_items):
-        vc1, vc2, vc3, vc4 = st.columns([3, 2, 2, 1])
+        # Asegura compatibilidad si el diccionario venía sin la clave 'por_persona'
+        if "por_persona" not in item_v:
+            item_v["por_persona"] = True
+
+        vc1, vc2, vc3, vc4, vc5 = st.columns([2.8, 1.7, 1.8, 1.1, 0.7])
         with vc1:
             st.session_state.valores_items[idx]["concepto"] = st.text_input(f"Concepto #{idx + 1}", value=item_v["concepto"], key=f"val_con_{idx}")
         with vc2:
             st.session_state.valores_items[idx]["nota"] = st.text_input("Nota gris", value=item_v["nota"], key=f"val_not_{idx}")
         with vc3:
-            st.session_state.valores_items[idx]["monto"] = st.number_input("Monto Total Ítem ($)", value=int(item_v["monto"]), step=10000, key=f"val_mon_{idx}")
+            st.session_state.valores_items[idx]["monto"] = st.number_input("Monto Total ($)", value=int(item_v["monto"]), step=10000, key=f"val_mon_{idx}")
         with vc4:
+            st.write("")
+            st.write("")
+            st.session_state.valores_items[idx]["por_persona"] = st.checkbox(
+                "Dividir p/p",
+                value=bool(item_v["por_persona"]),
+                key=f"val_pp_{idx}",
+                help="Si está marcado, se divide por los invitados en el modo Valor por Persona. Si no, se cobra como costo fijo."
+            )
+        with vc5:
             st.write("")
             st.write("")
             if len(st.session_state.valores_items) > 1:
@@ -230,14 +266,19 @@ with col_form:
     if num_personas <= 0:
         num_personas = 1
 
-    # Suma exacta de los ítems divididos por persona para total coherencia en el desglose
     items_validos = [v for v in st.session_state.valores_items if v["concepto"].strip() or v["monto"] > 0]
-    valor_x_persona = sum(int(round(v["monto"] / num_personas)) for v in items_validos)
+    valor_x_persona = sum(int(round(v["monto"] / num_personas)) for v in items_validos if v.get("por_persona", True))
+    costos_fijos_total = sum(int(v["monto"]) for v in items_validos if not v.get("por_persona", True))
 
     if modo_cierre == "Total Evento (Tradicional)":
         st.markdown(f"**TOTAL EVENTO:** `{formato_clp(total_evento)}`")
     else:
-        st.markdown(f"**VALOR X PERSONA (desglose unitario):** `{formato_clp(valor_x_persona)} p/p` | **PROPINA TOTAL:** `{formato_clp(monto_propina)}` (base {num_personas} personas)")
+        resumen_pp = f"**VALOR X PERSONA:** `{formato_clp(valor_x_persona)} p/p`"
+        if costos_fijos_total > 0:
+            resumen_pp += f" | **COSTOS FIJOS:** `{formato_clp(costos_fijos_total)}`"
+        if incluir_propina:
+            resumen_pp += f" | **PROPINA TOTAL:** `{formato_clp(monto_propina)}`"
+        st.markdown(f"{resumen_pp} *(base {num_personas} personas)*")
 
     st.markdown("---")
     st.subheader("Observaciones / Comentarios (Opcional)")
@@ -400,15 +441,20 @@ if pdf_base is not None:
 
         y_max_p1 = max(y_c, y_b)
 
-        # Preparar filas de valores según el modo seleccionado
+        # Preparar filas de valores según el modo seleccionado y si es por persona o costo fijo
         es_modo_pp = (modo_cierre != "Total Evento (Tradicional)")
         filas_valores = []
         for v in items_validos:
-            if es_modo_pp:
+            es_item_pp = v.get("por_persona", True)
+            if es_modo_pp and es_item_pp:
                 monto_pp_item = int(round(v["monto"] / num_personas))
                 filas_valores.append((v["concepto"].strip(), v["nota"].strip(), f"{formato_clp(monto_pp_item)} p/p"))
             else:
-                filas_valores.append((v["concepto"].strip(), v["nota"].strip(), formato_clp(v["monto"])))
+                # Si es costo fijo en modo por persona, se mantiene el valor total íntegro sin dividir
+                nota_display = v["nota"].strip()
+                if es_modo_pp and not es_item_pp and not nota_display:
+                    nota_display = "(costo fijo)"
+                filas_valores.append((v["concepto"].strip(), nota_display, formato_clp(v["monto"])))
 
         if not es_modo_pp and incluir_propina:
             filas_valores.append(("Propina sugerida 10%", "", formato_clp(monto_propina)))
@@ -442,15 +488,23 @@ if pdf_base is not None:
                 target_page.insert_text(fitz.Point(x_col1 + 10, y_texto_base - 3), "TOTAL EVENTO", fontname=fname_bold, fontsize=11.5, color=COLOR_WHITE)
                 insertar_texto_derecha(target_page, x_der - 16, y_texto_base, formato_clp(total_evento), font_obj_disp, fname_disp, 22, COLOR_GOLD)
             else:
-                target_page.insert_text(fitz.Point(x_col1 + 10, y_texto_base - 9), "VALOR POR PERSONA", fontname=fname_bold, fontsize=9.5, color=COLOR_WHITE)
+                # Izquierda: Valor por persona (solo ítems variables divididos)
+                target_page.insert_text(fitz.Point(x_col1 + 10, y_texto_base - 9), "VALOR POR PERSONA", fontname=fname_bold, fontsize=9.0, color=COLOR_WHITE)
                 txt_pp = f"{formato_clp(valor_x_persona)} p/p"
-                target_page.insert_text(fitz.Point(x_col1 + 10, y_texto_base + 10), txt_pp, fontname=fname_disp, fontsize=16, color=COLOR_GOLD)
+                target_page.insert_text(fitz.Point(x_col1 + 10, y_texto_base + 10), txt_pp, fontname=fname_disp, fontsize=15.5, color=COLOR_GOLD)
 
+                # Centro (si existen costos fijos adicionales)
+                if costos_fijos_total > 0:
+                    x_centro = W * 0.48
+                    target_page.insert_text(fitz.Point(x_centro, y_texto_base - 9), "COSTOS FIJOS", fontname=fname_bold, fontsize=8.5, color=COLOR_HEADER_META)
+                    target_page.insert_text(fitz.Point(x_centro, y_texto_base + 10), formato_clp(costos_fijos_total), fontname=fname_disp, fontsize=14, color=COLOR_WHITE)
+
+                # Derecha: Propina Total Sugerida
                 if incluir_propina:
-                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base - 9, "PROPINA TOTAL SUGERIDA", font_obj_bold, fname_bold, 9.0, COLOR_HEADER_META)
-                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base + 10, formato_clp(monto_propina), font_obj_disp, fname_disp, 16, COLOR_WHITE)
+                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base - 9, "PROPINA TOTAL SUGERIDA", font_obj_bold, fname_bold, 8.5, COLOR_HEADER_META)
+                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base + 10, formato_clp(monto_propina), font_obj_disp, fname_disp, 15.5, COLOR_WHITE)
                 else:
-                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base + 3, f"{num_personas} INVITADOS", font_obj_disp, fname_disp, 14, COLOR_WHITE)
+                    insertar_texto_derecha(target_page, x_der - 16, y_texto_base + 3, f"{num_personas} INVITADOS", font_obj_disp, fname_disp, 13.5, COLOR_WHITE)
 
         hay_desborde_items = bool(comidas_restantes or bebestibles_restantes)
         cabe_todo_en_p1 = (not hay_desborde_items) and ((y_max_p1 + alto_tabla_val + alto_obs_est + ALTO_BLOQUE_PAGO) < LIMITE_Y_PAGINA)
